@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=61.0", "setuptools_scm[toml]>=6.2", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bojdata"
+dynamic = ["version"]
+description = "Comprehensive Python package for accessing all Bank of Japan statistical data"
+readme = "README.md"
+authors = [
+    {name = "CaymanDev"},
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+keywords = ["boj", "bank-of-japan", "economics", "finance", "data", "statistics"]
+requires-python = ">=3.9"
+dependencies = [
+    "pandas>=1.3.0",
+    "requests>=2.26.0",
+    "beautifulsoup4>=4.10.0",
+    "numpy>=1.21.0",
+    "lxml>=4.6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/caymandev/bojdata"
+Documentation = "https://bojdata.readthedocs.io"
+Repository = "https://github.com/caymandev/bojdata"
+Issues = "https://github.com/caymandev/bojdata/issues"
+
+[project.scripts]
+bojdata = "bojdata.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "isort>=5.10.0",
+    "mypy>=0.950",
+    "sphinx>=4.5.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "bump2version>=1.0.1",
+    "build>=0.10.0",
+    "twine>=4.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bojdata*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "bojdata.__version__"}
+
+[tool.setuptools_scm]
+write_to = "bojdata/_version.py"
+version_scheme = "post-release"
+local_scheme = "no-local-version"
+
+[tool.black]
+line-length = 88
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
