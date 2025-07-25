@@ -13,7 +13,7 @@ the Bank of Japan's Time-Series Data Search portal, including:
 try:
     from ._version import version as __version__
 except ImportError:
-    __version__ = "0.2.1"
+    __version__ = "0.0.1"
 
 from .bulk_downloader import BOJBulkDownloader
 from .comprehensive_search import BOJComprehensiveSearch

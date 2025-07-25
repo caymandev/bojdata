@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "setuptools_scm[toml]>=6.2", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,13 +10,12 @@ readme = "README.md"
 authors = [
     {name = "CaymanDev"},
 ]
-license = {text = "MIT"}
+license = "MIT"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -65,12 +64,8 @@ where = ["."]
 include = ["bojdata*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "bojdata.__version__"}
+version = {attr = "bojdata._version.__version__"}
 
-[tool.setuptools_scm]
-write_to = "bojdata/_version.py"
-version_scheme = "post-release"
-local_scheme = "no-local-version"
 
 [tool.black]
 line-length = 88
