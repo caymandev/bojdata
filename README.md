@@ -58,18 +58,18 @@ pip install -e .[dev]
 ```python
 import bojdata
 
-# Download a single series
+# Download a single series - Monetary Base
 df = bojdata.read_boj(series="BS01'MABJMTA")
 
 # Download multiple series
-df = bojdata.read_boj(series=["IR01", "FM01"])
+df = bojdata.read_boj(series=["IR01", "FM01", "BS01'MABJMTA"])
 
 # Search for series
 results = bojdata.search_series("interest rate")
 
 # Download with data transformations (NEW)
 df_pct_change = bojdata.read_boj(series="BS01'MABJMTA", units='pch')  # Percent change
-df_yoy = bojdata.read_boj(series="CPI", units='pc1')  # Year-over-year % change
+df_yoy = bojdata.read_boj(series="PR01'IUQCP001", units='pc1')  # Year-over-year % change
 ```
 
 ### FRED-Compatible API (NEW)
@@ -81,8 +81,8 @@ api = BOJDataAPI()
 
 # Get series metadata (like FRED)
 metadata = api.get_series("BS01'MABJMTA")
-print(f"Title: {metadata['title']}")
-print(f"Frequency: {metadata['frequency']}")
+print(f"Title: {metadata['title']}")  # 'Monetary Base (Average Amounts Outstanding)'
+print(f"Frequency: {metadata['frequency']}")  # 'Monthly'
 
 # Get observations with transformations
 data = api.get_observations(
@@ -197,8 +197,11 @@ df_quarterly_yoy = bojdata.read_boj(
 )
 
 # Different aggregation methods
-df_sum = bojdata.read_boj("FLOW_SERIES", frequency="Q", aggregation_method="sum")
-df_eop = bojdata.read_boj("STOCK_SERIES", frequency="Q", aggregation_method="eop")
+# For flow data (e.g., trade balance), use sum aggregation
+df_sum = bojdata.read_boj("BP02", frequency="Q", aggregation_method="sum")
+
+# For stock data (e.g., monetary base), use end-of-period
+df_eop = bojdata.read_boj("BS01'MABJMTA", frequency="Q", aggregation_method="eop")
 ```
 
 ### Batch Operations (NEW)
@@ -207,13 +210,13 @@ df_eop = bojdata.read_boj("STOCK_SERIES", frequency="Q", aggregation_method="eop
 from bojdata import read_boj_batch
 
 # Download multiple series in parallel
-series_list = ['IR01', 'IR02', 'IR03', 'FM01', 'FM02', 'BS01', 'MD01']
+series_list = ['IR01', 'IR02', 'IR03', 'FM01', 'FM02', 'BS01\'MABJMTA', 'MD01']
 df = read_boj_batch(series_list, max_workers=5, units='pch')
 
 # Using the API
 api = BOJDataAPI()
 df = api.get_observations_multi(
-    ['IR01', 'FM01', 'BS01'],
+    ['IR01', 'FM01', 'BS01\'MABJMTA'],
     start_date='2020-01-01',
     units='pc1'
 )
@@ -262,10 +265,10 @@ If you're familiar with the FRED API, bojdata now provides a compatible interfac
 ```python
 # FRED Python                          # BOJData Equivalent
 from fredapi import Fred               from bojdata import BOJDataAPI
-fred = Fred(api_key='...')            api = BOJDataAPI()
+fred = Fred(api_key='...')            api = BOJDataAPI()  # No API key needed!
 
 # Get series info
-fred.get_series_info('DGS10')        api.get_series('FM08')
+fred.get_series_info('DGS10')        api.get_series('FM08')  # JGB 10-year yields
 
 # Get observations
 fred.get_series('DGS10')              api.get_observations('FM08')
@@ -287,6 +290,51 @@ fred.search('text:interest rate')     api.search_series('interest rate')
 | Geographic Scope | Mainly US data | Japanese data |
 | Vintage Data | Available | Not available |
 | Rate Limits | Yes | No (but be respectful) |
+
+## Discovering Valid Series Codes
+
+### List All Valid Series Codes
+
+```python
+from bojdata import BOJDataAPI
+
+api = BOJDataAPI()
+
+# Get all known valid series codes
+valid_codes = api.list_valid_series_codes()
+print(valid_codes.head())
+
+# Filter by category
+interest_rates = valid_codes[valid_codes['category'] == 'Interest Rates']
+print(interest_rates)
+```
+
+### Validate Series Codes
+
+```python
+# Check if a series code is valid
+api.validate_series_code("BS01'MABJMTA")  # True
+api.validate_series_code("INVALID")  # False
+
+# Get helpful hints for invalid codes
+from bojdata import read_boj
+
+try:
+    df = read_boj("interest rate")  # This will fail
+except Exception as e:
+    print(e)  # "Invalid series code 'interest rate'. Try IR01 or IR02 for interest rate data"
+```
+
+### Fuzzy Search for Series
+
+```python
+# Find series even with typos or partial names
+results = api.search_series_fuzzy("monetary")  # Finds monetary base series
+results = api.search_series_fuzzy("exchage")  # Finds exchange rate despite typo
+results = api.search_series_fuzzy("tankan")  # Finds TANKAN survey series
+```
+
+For a complete list of valid series codes, see [docs/VALID_SERIES_CODES.md](docs/VALID_SERIES_CODES.md).
 
 ## Available Data
 

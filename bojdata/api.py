@@ -16,6 +16,9 @@ from .exceptions import SeriesNotFoundError, InvalidParameterError
 from .batch import read_boj_batch
 from .releases import BOJReleaseCalendar
 from .metadata import SeriesMetadataExtractor
+from .utils import list_valid_series_codes, validate_series_code, search_series_fuzzy
+from .test_mode import is_test_mode, get_mock_data, get_mock_metadata
+from .fred_mapping import get_boj_series_from_fred, suggest_boj_alternative
 
 
 class BOJDataAPI:
@@ -65,11 +68,19 @@ class BOJDataAPI:
     no API key is required, but please be respectful of BOJ's servers.
     """
     
-    def __init__(self):
-        """Initialize the BOJ Data API wrapper."""
+    def __init__(self, test_mode: Optional[bool] = None):
+        """Initialize the BOJ Data API wrapper.
+        
+        Parameters
+        ----------
+        test_mode : bool, optional
+            If True, use mock data instead of real API calls.
+            If None (default), checks environment variable BOJ_TEST_MODE
+        """
         self.comprehensive_search = BOJComprehensiveSearch()
         self.release_calendar = BOJReleaseCalendar()
         self.metadata_extractor = SeriesMetadataExtractor()
+        self.test_mode = test_mode if test_mode is not None else is_test_mode()
     
     def get_series(self, series_id: str, **kwargs) -> Dict[str, Any]:
         """
@@ -99,23 +110,53 @@ class BOJDataAPI:
         >>> meta = api.get_series("BS01'MABJMTA")
         >>> print(meta['title'])
         """
-        # Search for the series to get metadata
-        search_results = core_search_series(series_id, limit=1)
-        
-        if search_results.empty:
-            # Try comprehensive search
-            comp_results = self.comprehensive_search.search_all_categories(series_id)
-            if comp_results.empty:
-                raise SeriesNotFoundError(series_id)
-            result = comp_results.iloc[0]
+        # First validate the series code
+        if not validate_series_code(series_id):
+            # Try to find it in our known valid codes
+            valid_codes = list_valid_series_codes()
+            exact_match = valid_codes[valid_codes['series_code'] == series_id]
+            if not exact_match.empty:
+                result = exact_match.iloc[0].to_dict()
+            else:
+                # Try fuzzy search to help user
+                fuzzy_matches = search_series_fuzzy(series_id, limit=1)
+                if not fuzzy_matches.empty:
+                    suggested = fuzzy_matches.iloc[0]['series_code']
+                    raise SeriesNotFoundError(f"Series '{series_id}' not found. Did you mean '{suggested}'?")
+                else:
+                    from .utils import get_series_code_hint
+                    hint = get_series_code_hint(series_id)
+                    raise SeriesNotFoundError(f"Invalid series code '{series_id}'. {hint}")
         else:
-            result = search_results.iloc[0]
+            # Valid format, try to get from our known list first
+            valid_codes = list_valid_series_codes()
+            exact_match = valid_codes[valid_codes['series_code'] == series_id]
+            if not exact_match.empty:
+                result = exact_match.iloc[0].to_dict()
+            else:
+                # Search for the series to get metadata
+                search_results = core_search_series(series_id, limit=1)
+                
+                if search_results.empty:
+                    # Try comprehensive search
+                    comp_results = self.comprehensive_search.search_all_categories(series_id, limit=1)
+                    if comp_results.empty:
+                        from .utils import get_series_code_hint
+                        hint = get_series_code_hint(series_id)
+                        raise SeriesNotFoundError(f"Series '{series_id}' not found in BOJ database. {hint}")
+                    result = comp_results.iloc[0]
+                else:
+                    result = search_results.iloc[0]
         
         # Try to get detailed metadata
         try:
             detailed_meta = self.metadata_extractor.get_series_metadata(series_id)
         except:
             detailed_meta = {}
+        
+        # Use mock data in test mode
+        if self.test_mode:
+            return get_mock_metadata(series_id)
         
         # Build metadata dictionary matching FRED structure
         metadata = {
@@ -195,15 +236,27 @@ class BOJDataAPI:
         >>> # Get quarterly averages with year-over-year change
         >>> data = api.get_observations("CPI", frequency='Q', units='pc1')
         """
-        # Get data using core read_boj function
-        df = read_boj(
-            series=series_id,
-            start_date=start_date,
-            end_date=end_date,
-            frequency=frequency,
-            units=units,
-            aggregation_method=aggregation_method
-        )
+        # Use mock data in test mode
+        if self.test_mode:
+            df = get_mock_data(series_id, start_date, end_date)
+            # Apply transformations if needed
+            if units != 'lin':
+                from .transformations import apply_transformation
+                df = apply_transformation(df, units)
+            # Apply frequency conversion if needed
+            if frequency:
+                from .core import _resample_data
+                df = _resample_data(df, frequency, aggregation_method)
+        else:
+            # Get data using core read_boj function
+            df = read_boj(
+                series=series_id,
+                start_date=start_date,
+                end_date=end_date,
+                frequency=frequency,
+                units=units,
+                aggregation_method=aggregation_method
+            )
         
         # Handle output type
         if output_type == 'dict':
@@ -293,7 +346,7 @@ class BOJDataAPI:
             # Full text search
             results = self.comprehensive_search.search_all_categories(
                 search_text, 
-                max_results=limit
+                limit=limit
             )
         
         # Apply offset for pagination
@@ -409,7 +462,7 @@ class BOJDataAPI:
         >>> cats = api.get_series_categories("BS01'MABJMTA")
         """
         # Search for the series to find its category
-        search_results = self.comprehensive_search.search_all_categories(series_id, max_results=1)
+        search_results = self.comprehensive_search.search_all_categories(series_id, limit=1)
         
         if search_results.empty:
             raise SeriesNotFoundError(series_id)
@@ -636,3 +689,110 @@ class BOJDataAPI:
             'Yearly': 'A',
         }
         return freq_map.get(frequency, frequency[0] if frequency else 'U')
+    
+    def list_valid_series_codes(self) -> pd.DataFrame:
+        """
+        Get a DataFrame of all known valid BOJ series codes.
+        
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns: series_code, name, category, frequency
+            
+        Examples
+        --------
+        >>> api = BOJDataAPI()
+        >>> valid_codes = api.list_valid_series_codes()
+        >>> print(valid_codes[valid_codes['category'] == 'Interest Rates'])
+        """
+        return list_valid_series_codes()
+    
+    def validate_series_code(self, series_code: str) -> bool:
+        """
+        Check if a series code is valid before attempting to fetch.
+        
+        Parameters
+        ----------
+        series_code : str
+            Series code to validate
+            
+        Returns
+        -------
+        bool
+            True if valid BOJ format, False otherwise
+            
+        Examples
+        --------
+        >>> api = BOJDataAPI()
+        >>> api.validate_series_code("BS01'MABJMTA")  # True
+        >>> api.validate_series_code("INVALID_CODE")  # False
+        """
+        return validate_series_code(series_code)
+    
+    def search_series_fuzzy(self, term: str, limit: int = 10) -> pd.DataFrame:
+        """
+        Fuzzy search for series that's more forgiving of search terms.
+        
+        Parameters
+        ----------
+        term : str
+            Search term (can be partial or misspelled)
+        limit : int, default 10
+            Maximum number of results
+            
+        Returns
+        -------
+        pd.DataFrame
+            Best matching series based on fuzzy matching
+            
+        Examples
+        --------
+        >>> api = BOJDataAPI()
+        >>> # Finds "interest rate" series even with typo
+        >>> results = api.search_series_fuzzy("intrest rate")
+        >>> 
+        >>> # Finds monetary base even with partial term
+        >>> results = api.search_series_fuzzy("monetary")
+        """
+        return search_series_fuzzy(term, limit)
+    
+    def get_series_fred_compatible(self, series_id: str, **kwargs) -> Dict[str, Any]:
+        """
+        Get series metadata with FRED series ID compatibility.
+        
+        If a FRED series ID is provided, automatically maps to BOJ equivalent.
+        
+        Parameters
+        ----------
+        series_id : str
+            FRED or BOJ series identifier
+        **kwargs : dict
+            Additional parameters
+            
+        Returns
+        -------
+        dict
+            Series metadata
+            
+        Examples
+        --------
+        >>> api = BOJDataAPI()
+        >>> # Works with FRED series codes
+        >>> meta = api.get_series_fred_compatible("DEXJPUS")
+        >>> # Equivalent to api.get_series("FM01")
+        """
+        # Check if it's a FRED series code
+        boj_series = get_boj_series_from_fred(series_id)
+        if boj_series:
+            print(f"Note: FRED series '{series_id}' mapped to BOJ series '{boj_series}'")
+            return self.get_series(boj_series, **kwargs)
+        else:
+            # Try as BOJ series
+            try:
+                return self.get_series(series_id, **kwargs)
+            except SeriesNotFoundError:
+                # Provide helpful FRED-specific error
+                suggestion = suggest_boj_alternative(series_id)
+                raise SeriesNotFoundError(
+                    f"Series '{series_id}' not found. {suggestion}"
+                )

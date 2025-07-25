@@ -9,10 +9,11 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from .exceptions import BOJDataError
+from .exceptions import BOJDataError, SeriesNotFoundError
 from .search import extract_download_url, search_for_series
-from .utils import clean_data_frame, parse_date_parameter
+from .utils import clean_data_frame, parse_date_parameter, validate_series_code, get_series_code_hint
 from .transformations import apply_transformation
+from .retry import exponential_backoff, create_resilient_session
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -95,9 +96,28 @@ def read_boj(
     failed_series = []
     
     for s in series:
+        # Validate series code first
+        if not validate_series_code(s):
+            hint = get_series_code_hint(s)
+            error_msg = f"Invalid series code '{s}'. {hint}"
+            failed_series.append((s, error_msg))
+            warnings.warn(error_msg)
+            continue
+            
         try:
             df = _download_single_series(s, start_date, end_date, frequency, units, aggregation_method)
             all_data.append(df)
+        except BOJDataError as e:
+            # Check if it's a "not found" error and add helpful hint
+            error_str = str(e)
+            if "Could not find CSV file" in error_str:
+                hint = get_series_code_hint(s)
+                error_msg = f"{error_str}. {hint}"
+                failed_series.append((s, error_msg))
+                warnings.warn(error_msg)
+            else:
+                failed_series.append((s, error_str))
+                warnings.warn(f"Failed to download series {s}: {error_str}")
         except Exception as e:
             failed_series.append((s, str(e)))
             warnings.warn(f"Failed to download series {s}: {str(e)}")
@@ -120,6 +140,7 @@ def read_boj(
         return result
 
 
+@exponential_backoff(max_retries=3, initial_delay=1.0)
 def _download_single_series(
     series: str,
     start_date: Optional[pd.Timestamp] = None,
@@ -130,6 +151,11 @@ def _download_single_series(
 ) -> pd.DataFrame:
     """Download a single data series using BOJ's direct URL format"""
     from urllib.parse import urlencode
+    
+    # Validate series code
+    if not validate_series_code(series):
+        hint = get_series_code_hint(series)
+        raise SeriesNotFoundError(f"Invalid series code '{series}'. {hint}")
     
     # Build URL parameters
     params = {
@@ -150,8 +176,11 @@ def _download_single_series(
     url = f"{base_url}?{urlencode(params)}"
     
     try:
+        # Create resilient session for downloads
+        session = create_resilient_session()
+        
         # Get the search results page
-        response = requests.get(url)
+        response = session.get(url)
         response.raise_for_status()
         
         # Parse to find CSV link
@@ -159,13 +188,18 @@ def _download_single_series(
         csv_links = soup.select("a[href*=csv]")
         
         if not csv_links:
-            raise BOJDataError(f"Could not find CSV file for series {series}")
+            raise SeriesNotFoundError(f"The series '{series}' was not found in the BOJ database")
         
         # Get CSV URL
         csv_url = f"https://www.stat-search.boj.or.jp/{csv_links[0]['href']}"
         
-        # Download CSV
-        df = pd.read_csv(csv_url, skiprows=0)
+        # Download CSV with resilient session
+        csv_response = session.get(csv_url)
+        csv_response.raise_for_status()
+        
+        # Parse CSV from response content
+        from io import StringIO
+        df = pd.read_csv(StringIO(csv_response.text), skiprows=0)
         
         # Clean and format
         df = clean_data_frame(df, series)
@@ -186,7 +220,13 @@ def _download_single_series(
         
     except requests.RequestException as e:
         raise BOJDataError(f"Failed to download series {series}: {str(e)}")
+    except SeriesNotFoundError:
+        # Re-raise with additional context
+        raise
     except Exception as e:
+        if "Could not find CSV file" in str(e):
+            hint = get_series_code_hint(series)
+            raise SeriesNotFoundError(f"The series '{series}' was not found in the BOJ database. {hint}")
         raise BOJDataError(f"Error processing series {series}: {str(e)}")
 
 

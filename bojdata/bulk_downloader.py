@@ -13,8 +13,10 @@ from urllib.parse import urljoin
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from tqdm import tqdm
 
 from .exceptions import BOJDataError
+from .utils import list_valid_series_codes
 from .utils import clean_data_frame
 
 
@@ -73,7 +75,7 @@ class BOJBulkDownloader:
         for dir in [self.raw_dir, self.processed_dir, self.metadata_dir]:
             dir.mkdir(exist_ok=True)
     
-    def download_all_flat_files(self, force: bool = False) -> Dict[str, Path]:
+    def download_all_flat_files(self, force: bool = False, show_progress: bool = True) -> Dict[str, Path]:
         """
         Download all available flat files from BOJ.
         
@@ -81,6 +83,8 @@ class BOJBulkDownloader:
         ----------
         force : bool, default False
             Force re-download even if files exist
+        show_progress : bool, default True
+            Show progress bar during downloads
         
         Returns
         -------
@@ -88,18 +92,31 @@ class BOJBulkDownloader:
             Dictionary mapping file types to downloaded file paths
         """
         downloaded = {}
+        failed = []
         
-        for file_type, info in self.FLAT_FILES.items():
+        file_items = list(self.FLAT_FILES.items())
+        if show_progress:
+            file_items = tqdm(file_items, desc="Downloading BOJ flat files")
+        
+        for file_type, info in file_items:
             try:
-                path = self.download_flat_file(file_type, force=force)
+                path = self.download_flat_file(file_type, force=force, show_progress=show_progress)
                 downloaded[file_type] = path
-                print(f"Downloaded {file_type}: {path}")
+                if not show_progress:
+                    print(f"✓ Downloaded {file_type}: {path}")
             except Exception as e:
-                print(f"Failed to download {file_type}: {e}")
+                failed.append((file_type, str(e)))
+                if not show_progress:
+                    print(f"✗ Failed to download {file_type}: {e}")
+        
+        if failed:
+            print(f"\nFailed downloads: {len(failed)}/{len(self.FLAT_FILES)}")
+            for file_type, error in failed:
+                print(f"  - {file_type}: {error}")
         
         return downloaded
     
-    def download_flat_file(self, file_type: str, force: bool = False) -> Path:
+    def download_flat_file(self, file_type: str, force: bool = False, show_progress: bool = True) -> Path:
         """
         Download a specific flat file.
         
@@ -130,15 +147,28 @@ class BOJBulkDownloader:
         # Get download URL
         download_url = self._get_flat_file_url(filename)
         
-        # Download file
-        print(f"Downloading {filename}...")
+        # Download file with progress bar
+        if not show_progress:
+            print(f"Downloading {filename}...")
+        
         response = requests.get(download_url, stream=True)
         response.raise_for_status()
         
-        # Save file
+        # Get file size if available
+        total_size = int(response.headers.get('content-length', 0))
+        
+        # Save file with progress
         with open(file_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+            if show_progress and total_size > 0:
+                with tqdm(total=total_size, unit='B', unit_scale=True, desc=filename) as pbar:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            pbar.update(len(chunk))
+            else:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
         
         return file_path
     
@@ -262,29 +292,10 @@ class BOJBulkDownloader:
         pd.DataFrame
             DataFrame with series codes, names, categories, and metadata
         """
-        # This would scrape the BOJ website to build a complete series catalog
-        # For now, return a structure that can be populated
-        
-        series_list = []
-        
-        # Parse each category page
-        categories = self._get_all_categories()
-        
-        for category in categories:
-            try:
-                series_in_category = self._get_series_in_category(category)
-                series_list.extend(series_in_category)
-            except Exception as e:
-                print(f"Error processing category {category}: {e}")
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(series_list)
-        
-        # Save metadata
-        metadata_path = self.metadata_dir / "all_series.parquet"
-        df.to_parquet(metadata_path)
-        
-        return df
+        # For now, return our known valid series codes
+        # In the future, this could be enhanced to scrape the BOJ website
+        # or use a more comprehensive API
+        return list_valid_series_codes()
     
     def _get_all_categories(self) -> List[Dict]:
         """Get all data categories from BOJ website"""

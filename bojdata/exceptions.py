@@ -26,10 +26,19 @@ class BOJConnectionError(BOJDataError):
 
 class BOJSeriesNotFoundError(BOJDataError):
     """Raised when requested series cannot be found"""
-    def __init__(self, series_id):
-        message = f"The series '{series_id}' was not found in the BOJ database"
+    def __init__(self, series_id_or_message):
+        if isinstance(series_id_or_message, str) and "'" in series_id_or_message and "not found" in series_id_or_message.lower():
+            # Already a formatted message with hints
+            message = series_id_or_message
+            # Extract series_id from message if possible
+            import re
+            match = re.search(r"'([^']+)'", series_id_or_message)
+            self.series_id = match.group(1) if match else series_id_or_message
+        else:
+            # Just a series ID, create default message
+            self.series_id = series_id_or_message
+            message = f"The series '{series_id_or_message}' was not found in the BOJ database"
         super().__init__(message, code=404)
-        self.series_id = series_id
 
 
 class BOJDataParsingError(BOJDataError):
