@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry logic AttributeError when response object is None in `exponential_backoff`
 - Test mode data generation to be deterministic using seeded random state based on series and date range
 
-## [0.0.1]
+## [## [Unreleased]]
 
 ### Added
 - FRED-compatible data transformations (9 units: lin, chg, ch1, pch, pc1, pca, cch, cca, log)
